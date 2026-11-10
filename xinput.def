@@ -1,0 +1,10 @@
+LIBRARY XINPUT1_4
+EXPORTS
+    XInputGetState=ProxyGetState @2
+    XInputSetState=ProxySetState @3
+    XInputGetCapabilities=ProxyGetCapabilities @4
+    XInputEnable=ProxyEnable @5
+    XInputGetBatteryInformation=ProxyGetBatteryInformation @7
+    XInputGetKeystroke=ProxyGetKeystroke @8
+    XInputGetAudioDeviceIds=ProxyGetAudioDeviceIds @10
+    XInputGetStateEx=ProxyGetStateEx @100 NONAME

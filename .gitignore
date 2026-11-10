@@ -1,0 +1,33 @@
+# Generated builds and release packages
+/build/
+/dist/
+/releases/
+*.dll
+*.exe
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.zip
+
+# Local analysis output and superseded internal notes
+/tools/
+/README.txt
+
+# Runtime files and game assets (never redistribute)
+*.log
+*.install.json
+/gamedata/
+*.dds
+*.sbproj
+
+# Editors and caches
+.vs/
+.vscode/
+__pycache__/
+*.pyc
+*.user
+*.suo
+.DS_Store
+Thumbs.db
