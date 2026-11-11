@@ -27,8 +27,12 @@ if ($Uninstall) {
     Write-Output 'Mod removed. Original game files were never modified. The diagnostic log and any edited config were retained.'
     exit
 }
-$supported = '00B67356582A4F3D900DB855224BA9379F9980DCCCFF3C89C3558CF0EEFB11CB'
-if ((Get-FileHash -LiteralPath $gameExe).Hash -ne $supported) {
+$supported = @(
+    '00B67356582A4F3D900DB855224BA9379F9980DCCCFF3C89C3558CF0EEFB11CB',
+    'AF5DF179E6725985B13A6E54E7B61AB73BF54635ED392A46E238F07BDFB73966'
+)
+$gameHash = (Get-FileHash -LiteralPath $gameExe).Hash
+if ($gameHash -notin $supported) {
     throw 'This game executable is a different build. Installation stopped to avoid applying incompatible hooks.'
 }
 $sourceDll = Join-Path $PSScriptRoot 'build\XInput1_4.dll'
@@ -39,8 +43,8 @@ foreach ($target in @($dllPath,$iniPath,$manifestPath)) {
 }
 $manifest = [ordered]@{
     Mod = 'ShrekControllerGlyphs'
-    Version = '1.0.0'
-    GameSHA256 = $supported
+    Version = '1.0.2'
+    GameSHA256 = $gameHash
     DllSHA256 = (Get-FileHash -LiteralPath $sourceDll).Hash
     IniSHA256 = (Get-FileHash -LiteralPath $sourceIni).Hash
 }
@@ -57,4 +61,4 @@ try {
     foreach ($createdPath in $created) { Remove-Item -LiteralPath $createdPath -ErrorAction SilentlyContinue }
     throw
 }
-Write-Output "Installed Shrek Controller Glyphs 1.0.0 to $gameRoot. Enable Steam Input, then launch normally through Steam."
+Write-Output "Installed Shrek Controller Glyphs 1.0.2 to $gameRoot. Enable Steam Input, then launch normally through Steam."

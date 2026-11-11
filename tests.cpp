@@ -10,7 +10,36 @@ int MockType(void*, uint64_t handle) { return mockTypes[handle-1]; }
 Prompt* MockOriginal(void*, Prompt* out, int, int16_t) {
     *out = {"original", "label", 0.7f, 123}; return out;
 }
-int main() {
+int mockFactoryMask;
+bool mockMissingInit;
+void* MockFactory() { return reinterpret_cast<void*>(1); }
+bool MockInit(void*,bool) { return true; }
+FARPROC WINAPI MockResolve(HMODULE, LPCSTR name) {
+    if (!strcmp(name,"SteamAPI_SteamInput_v007")) return (mockFactoryMask & 2) ? reinterpret_cast<FARPROC>(MockFactory) : nullptr;
+    if (!strcmp(name,"SteamAPI_SteamInput_v006")) return (mockFactoryMask & 1) ? reinterpret_cast<FARPROC>(MockFactory) : nullptr;
+    if (!strcmp(name,"SteamAPI_ISteamInput_Init")) return mockMissingInit ? nullptr : reinterpret_cast<FARPROC>(MockInit);
+    if (!strcmp(name,"SteamAPI_ISteamInput_GetControllerForGamepadIndex")) return reinterpret_cast<FARPROC>(MockController);
+    if (!strcmp(name,"SteamAPI_ISteamInput_GetInputTypeForHandle")) return reinterpret_cast<FARPROC>(MockType);
+    return nullptr;
+}
+int main(int argc, char** argv) {
+    for (int mask=0;mask<4;++mask) {
+        mockFactoryMask=mask;
+        Check(BindSteamInput(nullptr,MockResolve)==(mask!=0),"factory availability");
+        Check(steamInterfaceVersion==((mask&2)?7:(mask&1)?6:0),"v007 preferred, v006 fallback");
+        if (mask) Check(getSteamInput()==reinterpret_cast<void*>(1) && inputInit(nullptr,false),"resolved factory/init callable");
+    }
+    mockMissingInit=true;
+    Check(!BindSteamInput(nullptr,MockResolve),"missing required export rejected");
+    mockMissingInit=false;
+    if (argc==3 && !strcmp(argv[1],"--steam-dll")) {
+        HMODULE steam = LoadLibraryExA(argv[2],nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+        Check(steam!=nullptr,"load actual Steam API DLL");
+        Check(BindSteamInput(steam),"resolve required exports from installed game's Steam DLL");
+        printf("PASS: actual Steam API DLL exports resolved, interface v%03d. No Steam initialization or game launch.\n",steamInterfaceVersion);
+        FreeLibrary(steam);
+    }
+    printf("PASS: Steam Input v007/v006 factory selection and missing-export regression tests.\n");
     for (int key = -1; key < 160; ++key) {
         for (int type = 0; type <= 19; ++type) {
             Prompt p{"original", "label", 0.7f, 123};
@@ -66,5 +95,43 @@ int main() {
     XINPUT_STATE s{}; XINPUT_VIBRATION v{};
     Check(state(999,&s)==ERROR_BAD_ARGUMENTS || state(999,&s)==ERROR_DEVICE_NOT_CONNECTED,"system XInput forwarding");
     Check(vibration(999,&v)!=ERROR_SUCCESS,"system vibration forwarding");
+    // Exercise compatibility guards and the actual hook installer without
+    // launching the game, using an isolated image with synthetic vtables.
+    BYTE* fixture = static_cast<BYTE*>(VirtualAlloc(nullptr,0x610000,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+    Check(fixture != nullptr,"allocate build fixture");
+    game = fixture;
+    reinterpret_cast<IMAGE_DOS_HEADER*>(fixture)->e_lfanew = 0x100;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(fixture+0x100);
+    const BYTE xSignature[] = {0x49,0x0f,0xbf,0xc1,0x48,0x8d,0x0c,0x40};
+    const BYTE nativeLayout[] = {0x48,0x69,0xc0,0x08,0x01,0x00,0x00,0x80,0xbc,0x08,0xd9,0x01,0x00,0x00,0x00};
+    for (const auto& build : supportedBuilds) {
+        nt->FileHeader.TimeDateStamp=build.timestamp;
+        nt->OptionalHeader.SizeOfImage=build.imageSize;
+        memcpy(fixture+build.xinputPrompt,xSignature,sizeof(xSignature));
+        memcpy(fixture+build.windowsPrompt+10,nativeLayout,sizeof(nativeLayout));
+        auto** xs = reinterpret_cast<void**>(fixture+build.xinputVtable+0x40);
+        auto** ws = reinterpret_cast<void**>(fixture+build.windowsVtable+0x40);
+        *xs=fixture+build.xinputPrompt;
+        *ws=fixture+build.windowsPrompt;
+        fixture[build.windowsPrompt+10] ^= 1;
+        Check(!InstallGlyphHooks() && *xs==fixture+build.xinputPrompt,"reject native ABI mismatch without mutation");
+        fixture[build.windowsPrompt+10] ^= 1;
+        fixture[build.xinputPrompt] ^= 1;
+        Check(!InstallGlyphHooks() && *xs==fixture+build.xinputPrompt,"reject XInput signature mismatch");
+        fixture[build.xinputPrompt] ^= 1;
+        *ws=nullptr;
+        Check(!InstallGlyphHooks() && *xs==fixture+build.xinputPrompt,"reject altered vtable without partial hook");
+        *ws=fixture+build.windowsPrompt;
+        Check(InstallGlyphHooks(),"install hooks for supported build");
+        Check(*xs==reinterpret_cast<void*>(XInputPrompt) && *ws==reinterpret_cast<void*>(WindowsPrompt),"both vtables hooked");
+        Check(originalXInput==reinterpret_cast<PromptFn>(fixture+build.xinputPrompt),"correct original XInput function saved");
+        Check(originalWindows==reinterpret_cast<PromptFn>(fixture+build.windowsPrompt),"correct original native function saved");
+    }
+    nt->FileHeader.TimeDateStamp=0;
+    Check(!InstallGlyphHooks(),"unknown build rejected");
+    Check(!FindBuild(supportedBuilds[0].timestamp,0),"wrong image size rejected");
+    VirtualFree(fixture,0,MEM_RELEASE);
+    game=nullptr;
+    printf("PASS: both supported build layouts, hook installation, unknown build rejection, ABI/signature/vtable guards.\n");
     printf("PASS: 3,220 key/device cases; real hook/poll functions with simulated Steam slots, hot-swap and disconnect; native fallback; DLL loading, ordinal imports and Windows XInput forwarding.\n");
 }

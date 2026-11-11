@@ -2,7 +2,7 @@
 
 A Windows mod for **DreamWorks Shrek 2 Remastered (2026)** that shows PlayStation
 button prompts while using Steam Input. Xbox controllers keep the game's original
-prompts. Version **1.0.0**.
+prompts. Version **1.0.2**.
 
 The game ships PlayStation artwork, but Steam Input can expose a PlayStation
 controller as an Xbox-compatible device. This mod asks Steam for the underlying
@@ -20,24 +20,38 @@ controller type and selects the corresponding artwork during prompt rendering.
 
 ## Compatibility and testing
 
-Targets the **Windows Steam release, CL 574912**. This is not a mod for the original
+Targets the **Windows Steam releases, CL 574912 and CL 583774**. This is not a mod for the original
 2004 PC game or for console versions.
 
-Supported `Shrek.exe` SHA-256:
+Supported `Shrek.exe` SHA-256 values (original and updated build, respectively):
 
 ```text
 00B67356582A4F3D900DB855224BA9379F9980DCCCFF3C89C3558CF0EEFB11CB
+AF5DF179E6725985B13A6E54E7B61AB73BF54635ED392A46E238F07BDFB73966
 ```
 
 The author confirmed PlayStation prompts working in-game with a **DualSense Edge
 and Steam Input enabled**. The diagnostic log confirmed Steam type 13 and the
-GameInput prompt hook. Other physical controller models, mixed-controller co-op,
+GameInput prompt hook on CL 574912. The author also confirmed version 1.0.2 working
+in-game on CL 583774 with the DualSense Edge. The updated executable, debug symbols,
+and Steam Input v007 exports were checked, and automated hook tests passed.
+Other physical controller models, mixed-controller co-op,
 and physical hot-swapping have not yet been verified in-game.
 
 Automated tests cover 3,220 key/controller combinations, simulated Steam slot
 changes and disconnections, native fallback behavior, DLL loading, ordinal imports,
 and forwarding to Windows XInput. Installer tests check install/uninstall,
 refusal to overwrite existing files, and preservation of the original executable.
+
+Version 1.0.1 adds the updated game's function addresses while retaining the
+original build and adds tests for both build layouts and rejection of mismatched
+input layouts, function signatures and vtables.
+
+Version 1.0.2 also supports the updated game's Steam Input v007 interface, with
+v006 fallback for the original release. Version 1.0.1 loaded its glyph hooks but
+could not initialize controller detection on the updated Steam DLL. The fix adds
+factory-resolution regression tests and logs initialization problems instead of
+silently falling back to Xbox glyphs.
 
 The installer checks the executable hash. Runtime hooks also check the build,
 function signature and vtable entries. A different game update may require a mod

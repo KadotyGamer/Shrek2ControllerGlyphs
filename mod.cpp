@@ -24,9 +24,24 @@ void* (*getSteamInput)();
 bool (*inputInit)(void*, bool);
 uint64_t (*getController)(void*, int);
 int (*getType)(void*, uint64_t);
-int (*getControllers)(void*, uint64_t*);
+int steamInterfaceVersion;
+int steamInitIssue;
 ULONGLONG lastPoll;
 int forceMode; // 0 auto, 1 PlayStation, 2 Xbox
+
+struct GameBuild {
+    DWORD timestamp, imageSize, changelist;
+    DWORD xinputPrompt, windowsPrompt, xinputVtable, windowsVtable;
+};
+constexpr GameBuild supportedBuilds[] = {
+    {0x6ae2e602, 0x18cbd000, 574912, 0x2fea40, 0x2fb520, 0x512aa0, 0x511d68},
+    {0x6af383da, 0x18cbd000, 583774, 0x2fea50, 0x2fb530, 0x512a70, 0x511d38},
+};
+const GameBuild* FindBuild(DWORD timestamp, DWORD size) {
+    for (const auto& build : supportedBuilds)
+        if (build.timestamp == timestamp && build.imageSize == size) return &build;
+    return nullptr;
+}
 
 void Log(const char* format, ...) {
     if (!logPath[0]) return;
@@ -83,16 +98,24 @@ Prompt* WindowsPrompt(void* object, Prompt* out, int slot, int16_t key) {
 
 bool InstallGlyphHooks() {
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(game + reinterpret_cast<IMAGE_DOS_HEADER*>(game)->e_lfanew);
-    if (nt->FileHeader.TimeDateStamp != 0x6ae2e602 || nt->OptionalHeader.SizeOfImage != 0x18cbd000) {
+    const GameBuild* build = FindBuild(nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage);
+    if (!build) {
         Log("Unsupported Shrek.exe build. Glyph hooks disabled; controller input still forwarded."); return false;
     }
     const BYTE signature[] = {0x49,0x0f,0xbf,0xc1,0x48,0x8d,0x0c,0x40};
-    if (memcmp(game + 0x2fea40, signature, sizeof(signature))) {
+    if (memcmp(game + build->xinputPrompt, signature, sizeof(signature))) {
         Log("XInput prompt signature mismatch; no hooks installed."); return false;
     }
-    auto** xslot = reinterpret_cast<void**>(game + 0x512aa0 + 0x40);
-    auto** wslot = reinterpret_cast<void**>(game + 0x511d68 + 0x40);
-    if (*xslot != game+0x2fea40 || *wslot != game+0x2fb520) {
+    // Both supported builds use 0x108-byte native device records and the same
+    // connected flag at object+0x1d9. Validate those assumptions before hooking.
+    const BYTE nativeLayout[] = {0x48,0x69,0xc0,0x08,0x01,0x00,0x00,
+                                0x80,0xbc,0x08,0xd9,0x01,0x00,0x00,0x00};
+    if (memcmp(game + build->windowsPrompt + 10, nativeLayout, sizeof(nativeLayout))) {
+        Log("Native input layout mismatch; no hooks installed."); return false;
+    }
+    auto** xslot = reinterpret_cast<void**>(game + build->xinputVtable + 0x40);
+    auto** wslot = reinterpret_cast<void**>(game + build->windowsVtable + 0x40);
+    if (*xslot != game+build->xinputPrompt || *wslot != game+build->windowsPrompt) {
         Log("Prompt vtables differ from supported build; no hooks installed."); return false;
     }
     originalXInput = reinterpret_cast<PromptFn>(*xslot);
@@ -101,7 +124,7 @@ bool InstallGlyphHooks() {
     if (!SwapPointer(wslot, reinterpret_cast<void*>(originalWindows), reinterpret_cast<void*>(WindowsPrompt))) {
         SwapPointer(xslot, reinterpret_cast<void*>(XInputPrompt), reinterpret_cast<void*>(originalXInput)); return false;
     }
-    Log("Installed prompt hooks for Shrek CL 574912. Mode=%s", forceMode == 1 ? "PlayStation" : forceMode == 2 ? "Xbox" : "Auto");
+    Log("Installed prompt hooks for Shrek CL %lu. Mode=%s", build->changelist, forceMode == 1 ? "PlayStation" : forceMode == 2 ? "Xbox" : "Auto");
     return true;
 }
 
@@ -115,7 +138,31 @@ void InitLogging() {
     if (!_wcsicmp(mode, L"PlayStation")) forceMode = 1;
     if (!_wcsicmp(mode, L"Xbox")) forceMode = 2;
     FILE* f{}; if (!_wfopen_s(&f, logPath, L"w") && f) fclose(f);
-    Log("Shrek Controller Glyphs 1.0.0 loaded.");
+    Log("Shrek Controller Glyphs 1.0.2 loaded.");
+}
+
+using ExportResolver = FARPROC (WINAPI*)(HMODULE, LPCSTR);
+bool BindSteamInput(HMODULE steam, ExportResolver resolve = GetProcAddress) {
+    // Flat API functions belong to the SDK shipped with this DLL. Prefer its
+    // current factory, falling back to v006 for the original game release.
+    steamInterfaceVersion = 7;
+    getSteamInput = reinterpret_cast<decltype(getSteamInput)>(resolve(steam, "SteamAPI_SteamInput_v007"));
+    if (!getSteamInput) {
+        steamInterfaceVersion = 6;
+        getSteamInput = reinterpret_cast<decltype(getSteamInput)>(resolve(steam, "SteamAPI_SteamInput_v006"));
+    }
+    if (!getSteamInput) steamInterfaceVersion = 0;
+    inputInit = reinterpret_cast<decltype(inputInit)>(resolve(steam, "SteamAPI_ISteamInput_Init"));
+    getController = reinterpret_cast<decltype(getController)>(resolve(steam, "SteamAPI_ISteamInput_GetControllerForGamepadIndex"));
+    getType = reinterpret_cast<decltype(getType)>(resolve(steam, "SteamAPI_ISteamInput_GetInputTypeForHandle"));
+    return getSteamInput && inputInit && getController && getType;
+}
+
+void ReportSteamInitIssue(int issue, const char* message) {
+    if (steamInitIssue != issue) {
+        steamInitIssue = issue;
+        Log("Steam Input: %s Retrying automatically.", message);
+    }
 }
 
 void UpdateSteamTypes() {
@@ -123,17 +170,17 @@ void UpdateSteamTypes() {
     if (lastPoll && now - lastPoll < 200) return;
     lastPoll = now;
     if (!steamInput) {
-        HMODULE steam = GetModuleHandleW(L"steam_api64.dll"); if (!steam) return;
-        getSteamInput = reinterpret_cast<decltype(getSteamInput)>(GetProcAddress(steam, "SteamAPI_SteamInput_v006"));
-        inputInit = reinterpret_cast<decltype(inputInit)>(GetProcAddress(steam, "SteamAPI_ISteamInput_Init"));
-        getController = reinterpret_cast<decltype(getController)>(GetProcAddress(steam, "SteamAPI_ISteamInput_GetControllerForGamepadIndex"));
-        getType = reinterpret_cast<decltype(getType)>(GetProcAddress(steam, "SteamAPI_ISteamInput_GetInputTypeForHandle"));
-        getControllers = reinterpret_cast<decltype(getControllers)>(GetProcAddress(steam, "SteamAPI_ISteamInput_GetConnectedControllers"));
-        if (!getSteamInput || !inputInit || !getController || !getType || !getControllers) return;
+        HMODULE steam = GetModuleHandleW(L"steam_api64.dll");
+        if (!steam) { ReportSteamInitIssue(1,"steam_api64.dll is not loaded."); return; }
+        if (!BindSteamInput(steam)) {
+            ReportSteamInitIssue(2,"Required exports or supported v007/v006 interface factory are missing."); return;
+        }
         void* input = getSteamInput();
-        if (!input || !inputInit(input, false)) return;
+        if (!input) { ReportSteamInitIssue(3,"Interface is not available yet; launch through Steam."); return; }
+        if (!inputInit(input, false)) { ReportSteamInitIssue(4,"Interface initialization returned false."); return; }
         steamInput = input;
-        Log("Steam Input initialized; checking hardware identity for XInput slots 0-3.");
+        steamInitIssue = 0;
+        Log("Steam Input v%03d initialized; checking hardware identity for XInput slots 0-3.",steamInterfaceVersion);
         return; // The next SteamAPI_RunCallbacks supplies the first input frame.
     }
     for (int i = 0; i < 4; ++i) {
