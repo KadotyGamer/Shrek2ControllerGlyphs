@@ -2,6 +2,7 @@
 /build/
 /dist/
 /releases/
+/backups/
 *.dll
 *.exe
 *.obj

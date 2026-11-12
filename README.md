@@ -2,7 +2,7 @@
 
 A Windows mod for **DreamWorks Shrek 2 Remastered (2026)** that shows PlayStation
 button prompts while using Steam Input. Xbox controllers keep the game's original
-prompts. Version **1.0.2**.
+prompts. Version **1.0.5**.
 
 The game ships PlayStation artwork, but Steam Input can expose a PlayStation
 controller as an Xbox-compatible device. This mod asks Steam for the underlying
@@ -16,18 +16,21 @@ controller type and selects the corresponding artwork during prompt rendering.
 - Refreshes controller identity every 200 ms.
 - Preserves keyboard and mouse prompts and forwards XInput calls to Windows.
 - Supports automatic selection or a manual PlayStation/Xbox override.
-- Adds files beside the executable; does not modify original assets or saves.
+- The glyph DLL adds files beside the executable without changing game assets or saves.
+- Includes a separate, optional controller-only XInput workaround for CL 583916.
+  This opt-in script patches the executable and backs up the original; see below.
 
 ## Compatibility and testing
 
-Targets the **Windows Steam releases, CL 574912 and CL 583774**. This is not a mod for the original
+Targets the **Windows Steam releases, CL 574912, CL 583774 and CL 583916**. This is not a mod for the original
 2004 PC game or for console versions.
 
-Supported `Shrek.exe` SHA-256 values (original and updated build, respectively):
+Supported `Shrek.exe` SHA-256 values (CL 574912, 583774 and 583916, respectively):
 
 ```text
 00B67356582A4F3D900DB855224BA9379F9980DCCCFF3C89C3558CF0EEFB11CB
 AF5DF179E6725985B13A6E54E7B61AB73BF54635ED392A46E238F07BDFB73966
+5C2EDA7616B845E4DEAFE1387FE703FC75012E1854E759840E707C1FA5C25A29
 ```
 
 The author confirmed PlayStation prompts working in-game with a **DualSense Edge
@@ -35,6 +38,13 @@ and Steam Input enabled**. The diagnostic log confirmed Steam type 13 and the
 GameInput prompt hook on CL 574912. The author also confirmed version 1.0.2 working
 in-game on CL 583774 with the DualSense Edge. The updated executable, debug symbols,
 and Steam Input v007 exports were checked, and automated hook tests passed.
+CL 583916's executable, input layout, prompt addresses and Steam exports have
+been checked. Version 1.0.3 initialized detection successfully but the author
+reported that controller input itself had stopped, even with the mod removed.
+Version 1.0.4 corrects a separate native gamepad-counting bug. Version 1.0.5
+supports installing the glyph DLL alongside the optional XInput workaround.
+The author confirmed both controller input and PlayStation glyphs working with
+v1.0.5 on CL 583916, the XInput workaround applied, and Steam Input enabled.
 Other physical controller models, mixed-controller co-op,
 and physical hot-swapping have not yet been verified in-game.
 
@@ -52,6 +62,19 @@ v006 fallback for the original release. Version 1.0.1 loaded its glyph hooks but
 could not initialize controller detection on the updated Steam DLL. The fix adds
 factory-resolution regression tests and logs initialization problems instead of
 silently falling back to Xbox glyphs.
+
+Version 1.0.3 adds the CL 583916 build while retaining support for both previous
+builds. Controller detection continues to support Steam Input v007 and v006.
+
+Version 1.0.4 fixes the native fallback counting connected keyboards as gamepads,
+which could suppress PlayStation prompts despite Steam correctly detecting a PS5
+controller. It adds regression tests for keyboard/gamepad combinations and logs
+native device topology changes to diagnose remaining ambiguous cases.
+
+Version 1.0.5 accepts the exact CL 583916 executable produced by the optional
+XInput workaround and includes its reversible patch script. Glyph detection
+continues to use the real Steam controller family; Xbox controllers retain Xbox
+prompts. The workaround is never applied automatically by the glyph installer.
 
 The installer checks the executable hash. Runtime hooks also check the build,
 function signature and vtable entries. A different game update may require a mod
@@ -81,6 +104,51 @@ to overwrite an existing installation:
 
 Windows may require administrator access to write to a protected game folder.
 
+### Updating an existing glyph installation
+
+Close the game, run `./Install.ps1 -Uninstall` from the new package, then
+`./Install.ps1`. An edited INI is preserved by uninstall: move it outside the game
+folder before reinstalling and copy it back afterward. Manual installations
+without a manifest should remove only the old glyph DLL/config before installing.
+
+### Optional workaround when the controller does not respond
+
+If controller input fails even without the glyph DLL, changing prompts will not
+restore it. For **CL 583916 only**, `Set-XInputWorkaround.ps1` can select the game's
+built-in XInput backend and skip its GameInput-specific window handler.
+
+**This is an experimental, controller-only workaround. Keyboard/mouse gameplay
+may be unavailable. Steam Input must remain enabled for a DualSense.**
+It is not a general fix for every controller problem.
+
+Close the game, keep the extracted package in a writable folder, and run:
+
+```powershell
+.\Set-XInputWorkaround.ps1
+.\Install.ps1
+```
+
+Skip the second command if the glyph DLL is already installed. Both scripts accept
+`-GameDirectory 'D:\SteamLibrary\steamapps\common\Shrek2Remastered'`.
+The patch changes three bytes after checking the full executable hash and saves
+the original under `backups` beside the script. Keep that folder for restoration.
+The resulting executable SHA-256 is:
+
+```text
+5224E4C657B27D51134071686754A48DDA21D3D0787F92B35DB72EC148C961A6
+```
+
+To undo just the input workaround, close the game and run:
+
+```powershell
+.\Set-XInputWorkaround.ps1 -Restore
+```
+
+Restoration refuses to overwrite a different or updated executable. Steam file
+verification also restores official game files. Game updates can remove the patch;
+do not restore an old executable over a newer game build. No game executables,
+backups, debug symbols or assets are included in the download.
+
 ## Configuration
 
 Edit `ShrekControllerGlyphs.ini` in the game folder and restart:
@@ -109,7 +177,7 @@ and the first PlayStation prompt selected. Type `13` is PS5, `5` is PS4, and
   cannot identify the original hardware, use `Mode=PlayStation`.
 - Back/View uses the bundled Create/share icon. Custom Steam mappings to touchpad
   clicks or back paddles do not get specialized prompts.
-- This changes glyphs only. It does not add adaptive triggers, advanced haptics,
+- The glyph DLL changes prompts only. It does not add adaptive triggers, advanced haptics,
   native DualSense input handling, or controller remapping.
 
 ## Uninstallation
@@ -126,6 +194,8 @@ If you used the installer:
 
 The uninstaller verifies the installed DLL before removing it. An edited config
 and the diagnostic log are retained. Leave the game's other DLLs alone.
+Uninstalling the glyph DLL does not undo the optional input workaround; use
+`Set-XInputWorkaround.ps1 -Restore` separately if you applied it.
 
 ## Building from source
 
@@ -143,6 +213,7 @@ Optional installer test, with the supported game installed at the default Steam 
 
 ```powershell
 .\test-install.ps1
+.\test-workaround.ps1 # requires CL 583916; checks patch/restore and update guards
 ```
 
 This creates an isolated fixture under `build`; it does not install into the actual

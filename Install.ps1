@@ -24,12 +24,14 @@ if ($Uninstall) {
         Remove-Item -LiteralPath $iniPath
     }
     Remove-Item -LiteralPath $manifestPath
-    Write-Output 'Mod removed. Original game files were never modified. The diagnostic log and any edited config were retained.'
+    Write-Output 'Glyph mod removed. The game executable, diagnostic log and any edited config were retained. Undo the optional XInput workaround separately.'
     exit
 }
 $supported = @(
     '00B67356582A4F3D900DB855224BA9379F9980DCCCFF3C89C3558CF0EEFB11CB',
-    'AF5DF179E6725985B13A6E54E7B61AB73BF54635ED392A46E238F07BDFB73966'
+    'AF5DF179E6725985B13A6E54E7B61AB73BF54635ED392A46E238F07BDFB73966',
+    '5C2EDA7616B845E4DEAFE1387FE703FC75012E1854E759840E707C1FA5C25A29',
+    '5224E4C657B27D51134071686754A48DDA21D3D0787F92B35DB72EC148C961A6' # CL 583916 with optional XInput workaround
 )
 $gameHash = (Get-FileHash -LiteralPath $gameExe).Hash
 if ($gameHash -notin $supported) {
@@ -43,7 +45,7 @@ foreach ($target in @($dllPath,$iniPath,$manifestPath)) {
 }
 $manifest = [ordered]@{
     Mod = 'ShrekControllerGlyphs'
-    Version = '1.0.2'
+    Version = '1.0.5'
     GameSHA256 = $gameHash
     DllSHA256 = (Get-FileHash -LiteralPath $sourceDll).Hash
     IniSHA256 = (Get-FileHash -LiteralPath $sourceIni).Hash
@@ -61,4 +63,4 @@ try {
     foreach ($createdPath in $created) { Remove-Item -LiteralPath $createdPath -ErrorAction SilentlyContinue }
     throw
 }
-Write-Output "Installed Shrek Controller Glyphs 1.0.2 to $gameRoot. Enable Steam Input, then launch normally through Steam."
+Write-Output "Installed Shrek Controller Glyphs 1.0.5 to $gameRoot. Enable Steam Input, then launch normally through Steam."
