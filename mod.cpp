@@ -36,6 +36,7 @@ struct GameBuild {
 constexpr GameBuild supportedBuilds[] = {
     {0x6ae2e602, 0x18cbd000, 574912, 0x2fea40, 0x2fb520, 0x512aa0, 0x511d68},
     {0x6af383da, 0x18cbd000, 583774, 0x2fea50, 0x2fb530, 0x512a70, 0x511d38},
+    {0x6af3b8d9, 0x18cbd000, 583916, 0x2fea50, 0x2fb530, 0x512a70, 0x511d38},
 };
 const GameBuild* FindBuild(DWORD timestamp, DWORD size) {
     for (const auto& build : supportedBuilds)
@@ -71,6 +72,21 @@ Prompt* XInputPrompt(void* object, Prompt* out, int slot, int16_t key) {
     return out;
 }
 
+int CountNativeGamepads(const void* object, uint32_t& state) {
+    state = 0;
+    int count = 0;
+    for (int i = 0; i < 4; ++i) {
+        const BYTE* device = reinterpret_cast<const BYTE*>(object) + 0x1d8 + i*0x108;
+        const BYTE type = device[0];
+        const bool connected = device[1] != 0;
+        state |= uint32_t((type & 0x7f) | (connected ? 0x80 : 0)) << (i*8);
+        // DeviceType: 0 Invalid, 1 Keyboard, 2 Gamepad, 3 NintendoGamepad,
+        // 4 LeftJoycon, 5 RightJoycon. Only connected gamepads affect ambiguity.
+        if (connected && type >= 2 && type <= 5) ++count;
+    }
+    return count;
+}
+
 // Native Sony devices already have the game's own detection. For Steam virtual
 // GameInput devices, override only when exactly one gamepad is present, avoiding
 // incorrect slot assumptions in mixed-controller native co-op.
@@ -84,12 +100,24 @@ Prompt* WindowsPrompt(void* object, Prompt* out, int slot, int16_t key) {
     int type = 0;
     if (forceMode == 1) type = 13;
     else if (!forceMode && slot >= 0 && slot < 4) {
-        int nativeCount = 0;
-        for (int i = 0; i < 4; ++i)
-            if (*(reinterpret_cast<BYTE*>(object) + 0x1d9 + i*0x108)) ++nativeCount;
+        uint32_t nativeState;
+        const int nativeCount = CountNativeGamepads(object,nativeState);
         int detectedCount = 0;
-        for (auto& entry : slotTypes) if (entry.load() != 0) { ++detectedCount; type = entry.load(); }
+        uint32_t steamState = 0;
+        for (int i = 0; i < 4; ++i) {
+            const int detected = slotTypes[i].load();
+            steamState |= uint32_t(detected & 0xff) << (i*8);
+            if (detected != 0) { ++detectedCount; type = detected; }
+        }
         if (nativeCount != 1 || detectedCount != 1) type = 0;
+        // Log topology changes, not each frame. These distinguish disconnected,
+        // keyboard-only and ambiguous multi-gamepad cases without device IDs.
+        static std::atomic<uint64_t> lastState[4] = {UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX};
+        static std::atomic<unsigned> changes{};
+        const uint64_t snapshot = (uint64_t(steamState)<<32) | nativeState;
+        if (lastState[slot].exchange(snapshot)!=snapshot && changes.fetch_add(1)<32)
+            Log("GameInput prompt: slot=%d key=%d nativeState=%08lx gamepads=%d SteamControllers=%d selectedType=%d",
+                slot,key,static_cast<unsigned long>(nativeState),nativeCount,detectedCount,type);
     }
     if (ApplySony(*out, key, type) && replacements.fetch_add(1) == 0)
         Log("First PlayStation prompt rendered: slot=%d key=%d texture=%s (GameInput)", slot, key, out->texture);
@@ -106,7 +134,7 @@ bool InstallGlyphHooks() {
     if (memcmp(game + build->xinputPrompt, signature, sizeof(signature))) {
         Log("XInput prompt signature mismatch; no hooks installed."); return false;
     }
-    // Both supported builds use 0x108-byte native device records and the same
+    // All supported builds use 0x108-byte native device records and the same
     // connected flag at object+0x1d9. Validate those assumptions before hooking.
     const BYTE nativeLayout[] = {0x48,0x69,0xc0,0x08,0x01,0x00,0x00,
                                 0x80,0xbc,0x08,0xd9,0x01,0x00,0x00,0x00};
@@ -138,7 +166,7 @@ void InitLogging() {
     if (!_wcsicmp(mode, L"PlayStation")) forceMode = 1;
     if (!_wcsicmp(mode, L"Xbox")) forceMode = 2;
     FILE* f{}; if (!_wfopen_s(&f, logPath, L"w") && f) fclose(f);
-    Log("Shrek Controller Glyphs 1.0.2 loaded.");
+    Log("Shrek Controller Glyphs 1.0.5 loaded.");
 }
 
 using ExportResolver = FARPROC (WINAPI*)(HMODULE, LPCSTR);

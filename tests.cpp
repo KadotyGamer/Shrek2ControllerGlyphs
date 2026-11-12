@@ -82,10 +82,35 @@ int main(int argc, char** argv) {
     Check(!strcmp(output.texture,"original"),"disconnect clears cached family");
     mockTypes[0]=13; lastPoll=0; UpdateSteamTypes();
     BYTE nativeObject[0x600]{};
+    nativeObject[0x1d8]=2;
     nativeObject[0x1d9]=1;
     WindowsPrompt(nativeObject,&output,0,133);
     Check(!strcmp(output.texture,SonyTexture(133)),"single native gamepad Steam fallback");
+    // Reproduce a connected keyboard plus one gamepad: the old implementation
+    // counted the keyboard and silently refused the PlayStation override.
+    nativeObject[0x1d8+0x108]=1;
     nativeObject[0x1d9+0x108]=1;
+    WindowsPrompt(nativeObject,&output,0,133);
+    Check(!strcmp(output.texture,SonyTexture(133)),"keyboard must not suppress sole PS5 controller");
+    nativeObject[0x1d8]=1;
+    nativeObject[0x1d8+0x108]=2;
+    WindowsPrompt(nativeObject,&output,1,133);
+    Check(!strcmp(output.texture,SonyTexture(133)),"keyboard in slot 0 plus PS5 gamepad in slot 1");
+    WindowsPrompt(nativeObject,&output,1,7);
+    Check(!strcmp(output.texture,"original"),"native keyboard key remains unchanged");
+    mockTypes[0]=3; lastPoll=0; UpdateSteamTypes();
+    WindowsPrompt(nativeObject,&output,1,133);
+    Check(!strcmp(output.texture,"original"),"keyboard plus Xbox retains Xbox prompts");
+    mockTypes[0]=13; lastPoll=0; UpdateSteamTypes();
+    nativeObject[0x1d8+0x108]=0;
+    WindowsPrompt(nativeObject,&output,1,133);
+    Check(!strcmp(output.texture,"original"),"connected invalid type is not a gamepad");
+    nativeObject[0x1d8+0x108]=2;
+    nativeObject[0x1d9+0x108]=0;
+    WindowsPrompt(nativeObject,&output,1,133);
+    Check(!strcmp(output.texture,"original"),"disconnected gamepad is not counted");
+    nativeObject[0x1d9+0x108]=1;
+    nativeObject[0x1d8]=2;
     WindowsPrompt(nativeObject,&output,0,133);
     Check(!strcmp(output.texture,"original"),"mixed native gamepads do not guess slot identities");
     HMODULE proxy = LoadLibraryW(L"build\\XInput1_4.dll"); Check(proxy != nullptr,"load proxy");
@@ -132,6 +157,6 @@ int main(int argc, char** argv) {
     Check(!FindBuild(supportedBuilds[0].timestamp,0),"wrong image size rejected");
     VirtualFree(fixture,0,MEM_RELEASE);
     game=nullptr;
-    printf("PASS: both supported build layouts, hook installation, unknown build rejection, ABI/signature/vtable guards.\n");
+    printf("PASS: all %zu supported builds, hook installation, unknown build rejection, ABI/signature/vtable guards.\n",sizeof(supportedBuilds)/sizeof(supportedBuilds[0]));
     printf("PASS: 3,220 key/device cases; real hook/poll functions with simulated Steam slots, hot-swap and disconnect; native fallback; DLL loading, ordinal imports and Windows XInput forwarding.\n");
 }
