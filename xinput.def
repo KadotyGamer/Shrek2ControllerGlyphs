@@ -8,3 +8,4 @@ EXPORTS
     XInputGetKeystroke=ProxyGetKeystroke @8
     XInputGetAudioDeviceIds=ProxyGetAudioDeviceIds @10
     XInputGetStateEx=ProxyGetStateEx @100 NONAME
+    XInputGetCapabilitiesEx=ProxyGetCapabilitiesEx @108 NONAME
