@@ -302,6 +302,11 @@ extern "C" DWORD WINAPI ProxyGetStateEx(DWORD index, XINPUT_STATE* state) {
     static auto fn = reinterpret_cast<decltype(&XInputGetState)>(Real(MAKEINTRESOURCEA(100)));
     return fn ? fn(index,state) : ProxyGetState(index,state);
 }
+extern "C" DWORD WINAPI ProxyGetCapabilitiesEx(DWORD unknown, DWORD index, DWORD flags, void* caps) {
+    using CapsExFn = DWORD (WINAPI*)(DWORD, DWORD, DWORD, void*);
+    static auto fn = reinterpret_cast<CapsExFn>(Real(MAKEINTRESOURCEA(108)));
+    return fn ? fn(unknown, index, flags, caps) : ERROR_DEVICE_NOT_CONNECTED;
+}
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         selfModule = module;
